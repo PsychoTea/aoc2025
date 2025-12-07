@@ -1,205 +1,169 @@
 import sys 
+import functools 
+from typing import Tuple 
 
-with open(sys.argv[1]) as f:
-    lines = f.readlines()
+CHAR_START = 'S'
+CHAR_SPLITTER = '^'
+CHAR_BEAM = '|'
+CHAR_EMPTY = '.'
 
-new_lines = [ ]
+class Splitter:
+    all: list[Splitter] = [ ]
 
-for i, line in enumerate(lines):
-    line = line.strip('\n')
-
-    if i == 0:
-        new_lines.append(line)
-        continue
-
-    curr_line = ""
-
-    for j, char in enumerate(line):
-        next_char = line[j + 1] if j + 1 < len(line) else None 
-        prev_char = line[j - 1] if j - 1 >= 0 else None 
-
-        if next_char == '^':
-            # check char above next is line
-            if new_lines[i - 1][j + 1] == "|":
-                curr_line += "|"
-                continue 
-
-        if prev_char == '^':
-            if new_lines[i - 1][j - 1] == "|":
-                curr_line += "|"
-                continue 
-
-        if char == '.':
-            prev_line = new_lines[i - 1]
-
-            if prev_line[j] == 'S':
-                curr_line += "|"
-            elif prev_line[j] == "|":
-                curr_line += "|"
-            else:
-                curr_line += "."
-
-            continue 
-
-        curr_line += char 
-
-    new_lines.append(curr_line)
-
-# search for all carots, check if pipe is present left, right, and above
-num_splits = 0
-for i, line in enumerate(new_lines):
-    for j, char in enumerate(line):
-        if char == '^':
-            if new_lines[i - 1][j] == '|' and line[j - 1] == "|" and line[j + 1] == "|":
-                num_splits += 1
-
-all_nodes = [ ] 
-
-class Node:
-    def __init__(self, x, y):
-        global all_nodes 
-        
+    def __init__(self: Splitter, input: list[str], x: int, y: int) -> Splitter:
         self.x = x
         self.y = y
 
-        all_nodes.append(self)
-
-class Start(Node):
-    def __init__(self, x, y):
-        super().__init__(x, y)
-        self.down = None 
-
-    def __str__(self) -> str:
-        return f"Start: x = {self.x}, y = {self.y}, down = {self.down}"
-
-class End(Node):
-    def __str__(self) -> str:
-        return f"End: x = {self.x}, y = {self.y}"
-
-class Splitter(Node):
-    def __init__(self, x, y):
-        super().__init__(x, y)
         self.left = None 
         self.right = None 
 
-    def __str__(self) -> str:
-        return f"Splitter: x = {self.x}, y = {self.y}, left = {type(self.left).__name__}, right = {type(self.right).__name__}"
+        self._calculate(input)
 
-print("output")
+        Splitter.all.append(self)
 
-for line in new_lines:
-    print(line)
-
-print(f"{num_splits=}")
-
-root_node = None 
-
-for y, line in enumerate(new_lines):
-    for x, char in enumerate(line):
-        if char == 'S':
-            root_node = Start(x, y)
-
-            # Search down until we find the first splitter 
-            off = 0 
-            while True:
-                if new_lines[y + off][x] == '^':
-                    root_node.down = Splitter(x, y + off)
-                    break 
-
-                off += 1
-
-def find_node(x, y):
-    for node in all_nodes:
-        if node.x == x and node.y == y:
-            return node 
+    # Create a splitter, given the input data, and x and y position
+    # If a given splitter already exists at that location, return it 
+    @classmethod
+    def Create(cls: Splitter, input: list[str], x: int, y: int) -> Splitter:
+        if found_node := cls.Find(x, y):
+            return found_node 
         
-    return None 
+        return Splitter(input, x, y)
 
-def node_calculate(node):
-    # if isinstance(node, End):
-    #     return 
-    if node == None:
-        return 
+    # Find a splitter at a given x and y position
+    @classmethod 
+    def Find(cls: Splitter, x: int, y: int) -> Splitter:
+        return next((node for node in cls.all 
+                     if node.x == x and node.y == y), None)
+    
+    # Count the total number of splitters 
+    @classmethod 
+    def Count(cls: Splitter) -> int:
+        return len([x for x in cls.all if isinstance(x, Splitter)])
 
-    if node.left == None:
-        # Search down the left side until we find a splitter, or the end 
-        left_char = new_lines[node.y][node.x - 1]
+    # Recursively walk from the given node to each possible "end" (`None`) node 
+    @functools.cache
+    def walk(self: Splitter) -> int:
+        return (self.left.walk() if self.left else 1) + \
+               (self.right.walk() if self.right else 1)
 
-        off = 0
-        while left_char == '|':
-            off += 1
-            if node.y + off >= len(new_lines):
-                left_char = None 
-                break 
+    # Given the input data, recursively create child splitters
+    def _calculate(self: Splitter, input: list[str]) -> None:
+        if self.left == None:
+            # Search down the left side until we find a splitter, or the end 
+            col, row = search_column(input, self.x - 1, self.y) 
+
+            if col != -1 and row != -1:
+                self.left = Splitter.Create(input, col, row)
+
+        if self.right == None:
+            # Search down the right side until we find a splitter, or the end 
+            col, row = search_column(input, self.x + 1, self.y)
+
+            if col != -1 and row != -1:
+                self.right = Splitter.Create(input, col, row)
+
+# "Execute" the input data, filling in all of th ebeams 
+def execute_input(input: list[str]) -> list[str]:
+    executed_input: list[str] = [ ]
+
+    # First, take the input data and calculate the "executed" tree 
+    for i, line in enumerate(input):
+        line = line.strip('\n')
+
+        # Skip first line, it only contains the start node 
+        if i == 0:
+            executed_input.append(line)
+            continue
+
+        curr_line = ""
+
+        # Check each character in the line 
+        for j, char in enumerate(line):
+            # Grab the character left, right, and above `char`
+            left_char = line[j - 1:j] or None
+            right_char = line[j + 1:j + 2] or None
+            above_char = executed_input[i - 1][j]
+
+            # Right splitter, and the char above is a beam
+            if right_char == CHAR_SPLITTER and executed_input[i - 1][j + 1] == CHAR_BEAM:
+                curr_line += CHAR_BEAM
+                continue 
             
-            left_char = new_lines[node.y + off][node.x - 1]
+            # Left splitter, and the char above is a beam
+            if left_char == CHAR_SPLITTER and executed_input[i - 1][j - 1] == CHAR_BEAM:
+                curr_line += CHAR_BEAM
+                continue 
 
-        if left_char == '^':
-            if found_node := find_node(node.x -1, node.y + off):
-                node.left = found_node
-            else:
-                node.left = Splitter(node.x - 1, node.y + off)
-        elif left_char == None:
-            if found_node := find_node(node.x + 1, node.y + off):
-                node.left = found_node
-            else:
-                node.left = None
-        else:
-            print(f"Reached unknown char: {left_char}")
+            # Otherwise, check if we should convert this character into a beam
+            if char == CHAR_EMPTY and (above_char == CHAR_START or above_char == CHAR_BEAM):
+                curr_line += CHAR_BEAM
+                continue 
 
-        node_calculate(node.left)
+            curr_line += char 
 
-    if node.right == None:
-        # Search down the right side until we find a splitter, or the end 
-        right_char = new_lines[node.y][node.x + 1]
+        executed_input.append(curr_line)
 
-        off = 0
-        while right_char == '|':
-            off += 1
-            if node.y + off >= len(new_lines):
-                right_char = None 
-                break 
+    return executed_input
 
-            right_char = new_lines[node.y + off][node.x + 1]
+# Find the start character
+def find_start_location(input: list[str]) -> Tuple[int, int]:
+    for y, line in enumerate(input):
+        for x, char in enumerate(line):
+            if char != CHAR_START:
+                continue 
 
-        if right_char == '^':
-            if found_node := find_node(node.x + 1, node.y + off):
-                node.right = found_node
-            else:
-                node.right = Splitter(node.x + 1, node.y + off)
-        elif right_char == None:
-            if found_node := find_node(node.x + 1, node.y + off):
-                node.right = found_node
-            else:
-                node.right = None
-        else:
-            print(f"Reached unknown char: {right_char}")
+            return (x, y)
+    
+    return (-1, -1)
 
-        node_calculate(node.right)
+# Search down a column until we find a non-beam character, or reach the end 
+def search_column(input: list[str], col: int, start_row: int) -> Tuple[int, int]:
+    for row in range(start_row, len(input)):
+        char = input[row][col]
 
-node_calculate(root_node.down)
+        if char == CHAR_BEAM:
+            continue 
 
-print(f"calculated {len(all_nodes)} unique nodes")
+        return (col, row) 
+    
+    return (-1, -1)
 
-print(root_node)
+def main() -> None:
+    if len(sys.argv) < 2:
+        print(f"Usage: python3 {sys.argv[0]} [input.txt]")
+        return 
+    
+    with open(sys.argv[1]) as f:
+        data = f.readlines()
 
-print(root_node.down)
+    executed_input = execute_input(data)
 
-# print("=== dumping nodes ===")
+    # Find the start point
+    (start_x, start_y) = find_start_location(executed_input)
 
-# for node in all_nodes:
-#     print(node)
+    # Search down until we find the first splitter 
+    col, row = search_column(executed_input, start_x, start_y + 1)
+    root_splitter = Splitter.Create(executed_input, col, row)
 
-# Walk the tree from the root node to each possible End node 
-def walk_node(node):
-    # if node is None:
-    #     return 0
+    path_count = root_splitter.walk()
 
-    if node == None:
-        return 1
+    # Print the "executed" input
+    for line in executed_input:
+        print(line)
 
-    return walk_node(node.left) + walk_node(node.right)
+    print("")
 
-print("walking nodes...")
-found_ends = walk_node(root_node.down)
-print(f"{found_ends=}")
+    # answers for input.txt (puzzle input)
+    # part 1 = 1581
+    # part 2 = 73007003089792
+
+    # answers for input2.txt (example input)
+    # part 1 = 21
+    # part 2 = 40
+
+    print(f"Splitter count (part 1) = {Splitter.Count()}")
+    print(f"Path count (part 2) = {path_count}")
+
+if __name__ == '__main__':
+    main()
